@@ -26,11 +26,6 @@ from execution.cost_model import ProportionalCostModel
 from strategies.buy_and_hold import BuyAndHoldStrategy
 from strategies.ml.direction_ml import DirectionMLStrategy
 
-TRAIN_SPLIT = 0.70   # 70% train, 30% test
-INITIAL_CAPITAL = 10_000.0
-COMMISSION_PCT = 0.0025
-
-
 def load_config(path: str) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
@@ -40,6 +35,10 @@ def main(config_path: str = "config/default.yaml") -> None:
     cfg = load_config(config_path)
     sp = cfg.get("strategy_params", {})
     ml_params = sp.get("ml", {})
+
+    bt = cfg.get("backtest", {})
+    INITIAL_CAPITAL = float(bt.get("initial_capital", 10_000.0))
+    COMMISSION_PCT = float(bt.get("commission_pct", 0.0025))
 
     all_symbols = (
         cfg["symbols"]["long_history"] + cfg["symbols"]["short_history"]

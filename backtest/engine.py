@@ -75,6 +75,7 @@ class BacktestEngine:
 
         portfolio = Portfolio(initial_capital=cfg.initial_capital)
         commission = cfg.strategy_params.get("commission_pct", 0.0025)
+        drift_threshold = cfg.strategy_params.get("drift_threshold", 0.02)
 
         # Track last known prices for force-close logic
         last_known_prices: dict[str, float] = {}
@@ -134,6 +135,7 @@ class BacktestEngine:
                 target_weights=valid_weights,
                 prices=prices,
                 commission_pct=commission,
+                drift_threshold=drift_threshold,
             )
             portfolio.update(timestamp, prices)
 

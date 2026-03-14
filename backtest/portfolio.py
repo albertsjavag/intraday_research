@@ -62,6 +62,7 @@ class Portfolio:
         target_weights: dict[str, float],
         prices: dict[str, float | None],
         commission_pct: float = 0.0,
+        drift_threshold: float = 0.02,
     ) -> None:
         """Rebalance positions to match target_weights.
 
@@ -75,17 +76,30 @@ class Portfolio:
             skipped (no new position opened, no existing position changed).
         commission_pct:
             One-way commission fraction deducted from cash on each trade.
+        drift_threshold:
+            Minimum absolute weight deviation required to trigger a trade.
+            Prevents paying commission on micro-rebalances every bar caused
+            by price drift. Default 0.02 = only trade when current weight
+            has drifted more than 2% from target.
         """
         portfolio_value = self.total_value(prices)
+        if portfolio_value <= 0:
+            return
 
         for sym, weight in target_weights.items():
             price = prices.get(sym)
             if price is None or (isinstance(price, float) and np.isnan(price)) or price == 0:
                 continue
 
+            current_qty = self._positions.get(sym, 0.0)
+            current_weight = (current_qty * price) / portfolio_value
+
+            # Only trade if weight has drifted beyond threshold
+            if abs(current_weight - weight) < drift_threshold:
+                continue
+
             target_notional = portfolio_value * weight
             target_qty = target_notional / price
-            current_qty = self._positions.get(sym, 0.0)
             delta_qty = target_qty - current_qty
 
             if abs(delta_qty) < 1e-10:

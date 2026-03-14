@@ -29,15 +29,6 @@ from strategies.mean_reversion import MeanReversionStrategy
 from strategies.ml.direction_ml import DirectionMLStrategy
 from strategies.ts_momentum import TimeSeriesMomentumStrategy
 
-# ── Period constants ────────────────────────────────────────────────────────
-TRAIN_START = "2021-01-01"
-TRAIN_END = "2023-06-30"
-TEST_START = "2023-07-01"
-TEST_END = "2025-12-31"
-INITIAL_CAPITAL = 10_000.0
-COMMISSION_PCT = 0.0025
-
-
 def load_config(path: str) -> dict:
     with open(path) as f:
         return yaml.safe_load(f)
@@ -46,6 +37,15 @@ def load_config(path: str) -> dict:
 def main(config_path: str = "config/default.yaml") -> None:
     cfg = load_config(config_path)
     sp = cfg.get("strategy_params", {})
+
+    bt = cfg.get("backtest", {})
+    TRAIN_START = bt.get("train_start", "2021-01-01")
+    TRAIN_END = bt.get("train_end", "2023-06-30")
+    TEST_START = bt.get("test_start", "2023-07-01")
+    TEST_END = bt.get("test_end", "2025-12-31")
+    INITIAL_CAPITAL = float(bt.get("initial_capital", 10_000.0))
+    COMMISSION_PCT = float(bt.get("commission_pct", 0.0025))
+    DRIFT_THRESHOLD = float(bt.get("drift_threshold", 0.02))
 
     all_symbols = (
         cfg["symbols"]["long_history"] + cfg["symbols"]["short_history"]
