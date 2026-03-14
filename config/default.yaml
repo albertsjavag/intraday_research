@@ -1,0 +1,39 @@
+symbols:
+  long_history:  ["BTC/USD", "ETH/USD"]
+  short_history: ["SOL/USD"]
+  long_start:    "2020-01-01"
+  short_start:   "2021-10-01"
+
+timeframe: "hour"   # "day" or "hour"
+
+backtest:
+  train_start:     "2021-01-01"
+  train_end:       "2023-06-30"
+  test_start:      "2023-07-01"
+  test_end:        "2025-12-31"
+  initial_capital: 10000.0
+  commission_pct:  0.0025
+
+live:
+  notional_per_trade: 300.0
+  utc_hour: 0
+
+strategy_params:
+  ts_momentum:
+    lookbacks: [24, 72, 168, 336]
+    long_threshold: 0.25
+  mean_reversion:
+    lookback: 48
+    z_threshold: 0.5
+    long_only: true
+  composite:
+    weighting: "sharpe"
+    lookback: 168
+    rebalance_freq: 24
+    max_weight: 0.60
+  ml:
+    n_estimators: 200
+    max_depth: 3
+    learning_rate: 0.05
+    forward_bars: 8
+    proba_threshold: 0.52

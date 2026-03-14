@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "intraday_research"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["pandas>=2.1", "numpy>=1.26", "pyyaml>=6.0"]
+
+[project.optional-dependencies]
+data   = ["yfinance>=0.2"]
+ml     = ["scikit-learn>=1.4"]
+alpaca = ["alpaca-py>=0.20", "python-dotenv>=1.0", "rich>=13.0"]
+dev    = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.3"]
+
+[tool.setuptools.packages.find]
+where   = ["."]
+include = ["data*", "strategies*", "execution*", "backtest*", "analytics*", "utils*"]
