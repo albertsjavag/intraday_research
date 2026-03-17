@@ -25,6 +25,7 @@ from data.handlers import MockHandler
 from execution.cost_model import ProportionalCostModel
 from strategies.buy_and_hold import BuyAndHoldStrategy
 from strategies.composite import CompositeStrategy
+from strategies.macro_regime import MacroRegimeFilter
 from strategies.mean_reversion import MeanReversionStrategy
 from strategies.ml.direction_ml import DirectionMLStrategy
 from strategies.ts_momentum import TimeSeriesMomentumStrategy
@@ -86,15 +87,18 @@ def main(config_path: str = "config/default.yaml") -> None:
     mr_params = sp.get("mean_reversion", {})
     ml_params = sp.get("ml", {})
     comp_params = sp.get("composite", {})
+    regime_params = sp.get("macro_regime", {})
 
     bah = BuyAndHoldStrategy()
     ts_mom = TimeSeriesMomentumStrategy(
-        lookbacks=ts_params.get("lookbacks", [24, 72, 168, 336]),
+        lookbacks=ts_params.get("lookbacks", [72, 168, 336, 720]),
         long_threshold=ts_params.get("long_threshold", 0.25),
+        min_holding_bars=ts_params.get("min_holding_bars", 0),
     )
     mean_rev = MeanReversionStrategy(
-        lookback=mr_params.get("lookback", 48),
+        lookback=mr_params.get("lookback", 168),
         z_threshold=mr_params.get("z_threshold", 0.5),
+        exit_z=mr_params.get("exit_z", 0.0),
         long_only=mr_params.get("long_only", True),
     )
     ml = DirectionMLStrategy(
@@ -104,24 +108,43 @@ def main(config_path: str = "config/default.yaml") -> None:
         forward_bars=ml_params.get("forward_bars", 8),
         proba_threshold=ml_params.get("proba_threshold", 0.52),
     )
+    # ML is excluded from composite: its bar-by-bar signal changes contaminate
+    # the blended output with excessive turnover. It runs best as a standalone.
     composite = CompositeStrategy(
-        strategies=[bah, ts_mom, mean_rev, ml],
+        strategies=[bah, ts_mom, mean_rev],
         lookback=comp_params.get("lookback", 168),
         rebalance_freq=comp_params.get("rebalance_freq", 24),
         max_weight=comp_params.get("max_weight", 0.60),
     )
 
-    strategies = [bah, ts_mom, mean_rev, composite]
+    # Derive daily BTC close from hourly data (resample avoids a second API call)
+    barometer_sym = regime_params.get("barometer_symbol", "BTC/USD")
+    if barometer_sym not in full_data.close.columns:
+        barometer_sym = full_data.symbols[0]
+    daily_btc_close = full_data.close[barometer_sym].resample("D").last().dropna()
 
-    # Fit ML on train data only
+    regime_ts_mom = MacroRegimeFilter(
+        ts_mom,
+        daily_btc_close,
+        ma_period=regime_params.get("ma_period", 200),
+        slope_window=regime_params.get("slope_window", 20),
+        sideways_band=regime_params.get("sideways_band", 0.02),
+    )
+
+    strategies = [bah, ts_mom, mean_rev, regime_ts_mom]
+
+    # Pre-fit all strategies with appropriate data windows.
+    # ML is trained on train period only — avoids look-ahead contamination.
+    # Non-ML strategies have no meaningful fit() so full_data is fine.
     train_data = full_data.slice(TRAIN_START, TRAIN_END)
     print(f"Fitting ML on {TRAIN_START} → {TRAIN_END} ({len(train_data.index)} bars)...")
     ml.fit(train_data)
     print("ML fitting complete.")
 
-    # Fit composite (which fits sub-strategies) on full data for warmup
-    # (ML is already fitted above — composite.fit() is a no-op for ML)
-    composite.fit(full_data)
+    bah.fit(full_data)
+    ts_mom.fit(full_data)
+    mean_rev.fit(full_data)
+    regime_ts_mom.fit(full_data)
 
     # ── Run backtests ─────────────────────────────────────────────────────────
     execution = ProportionalCostModel(commission_pct=COMMISSION_PCT)
@@ -135,8 +158,9 @@ def main(config_path: str = "config/default.yaml") -> None:
             start=TEST_START,
             end=TEST_END,
             initial_capital=INITIAL_CAPITAL,
-            strategy_params={"commission_pct": COMMISSION_PCT},
+            strategy_params={"commission_pct": COMMISSION_PCT, "drift_threshold": DRIFT_THRESHOLD},
             signal_start=TRAIN_START,
+            skip_fit=True,
         )
         engine = BacktestEngine(
             config=cfg_bt,
@@ -188,7 +212,8 @@ def _save_equity_chart(results: list) -> None:
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    out_path = Path(__file__).parent / "equity_curves.png"
+    out_path = Path(__file__).parent.parent / "plots" / "equity_curves.png"
+    out_path.parent.mkdir(exist_ok=True)
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"\nEquity chart saved → {out_path}")

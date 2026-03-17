@@ -22,7 +22,10 @@ def load_csv_ohlcv(
     df = df.set_index(date_col).sort_index()
 
     if tz is not None:
-        df.index = df.index.tz_localize(tz).tz_convert(None)
+        if df.index.tz is not None:
+            df.index = df.index.tz_convert(tz).tz_convert(None)
+        else:
+            df.index = df.index.tz_localize(tz).tz_convert(None)
     elif df.index.tz is not None:
         df.index = df.index.tz_convert(None)
 

@@ -47,14 +47,29 @@ class CompositeStrategy(Strategy):
     def name(self) -> str:
         return "composite"
 
-    def fit(self, data: MarketData, params: dict | None = None) -> None:
+    def fit(
+        self,
+        data: MarketData,
+        params: dict | None = None,
+        fit_sub_strategies: bool = True,
+    ) -> None:
+        """Fit composite params and optionally fit sub-strategies.
+
+        Parameters
+        ----------
+        fit_sub_strategies:
+            If False, sub-strategies are NOT refitted. Use this when
+            sub-strategies have already been fitted on appropriate windows
+            (e.g. ML trained on train-only data) to avoid look-ahead bias.
+        """
         if params:
             self._lookback = params.get("lookback", self._lookback)
             self._rebalance_freq = params.get("rebalance_freq", self._rebalance_freq)
             self._max_weight = params.get("max_weight", self._max_weight)
 
-        for strategy in self._strategies:
-            strategy.fit(data, params)
+        if fit_sub_strategies:
+            for strategy in self._strategies:
+                strategy.fit(data, params)
 
     def generate_signals(self, data: MarketData) -> pd.DataFrame:
         # Generate signals from each sub-strategy

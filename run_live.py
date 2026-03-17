@@ -20,11 +20,7 @@ import yaml
 from data.alpaca_handler import AlpacaDataHandler
 from data.loaders import merge_market_data
 from execution.alpaca_trader import AlpacaTrader
-from strategies.buy_and_hold import BuyAndHoldStrategy
-from strategies.composite import CompositeStrategy
-from strategies.mean_reversion import MeanReversionStrategy
-from strategies.ml.direction_ml import DirectionMLStrategy
-from strategies.ts_momentum import TimeSeriesMomentumStrategy
+from backtests.run_full_backtest import build_strategies_from_config
 from utils.secrets import load_dotenv
 
 STATE_FILE = Path("state/last_signals.json")
@@ -62,38 +58,15 @@ def build_data(cfg: dict) -> "MarketData":  # type: ignore[name-defined]
     return merge_market_data(datasets)
 
 
-def build_strategy(cfg: dict) -> CompositeStrategy:
-    sp = cfg.get("strategy_params", {})
-
-    ts_params = sp.get("ts_momentum", {})
-    mr_params = sp.get("mean_reversion", {})
-    ml_params = sp.get("ml", {})
-    comp_params = sp.get("composite", {})
-
-    bah = BuyAndHoldStrategy()
-    ts_mom = TimeSeriesMomentumStrategy(
-        lookbacks=ts_params.get("lookbacks", [24, 72, 168, 336]),
-        long_threshold=ts_params.get("long_threshold", 0.25),
+def build_strategy(cfg: dict, data: "MarketData", daily_btc_close: pd.Series):  # type: ignore[name-defined]
+    """Build the composite live strategy from config, fit it, and return it."""
+    bt = cfg.get("backtest", {})
+    _, _, composite = build_strategies_from_config(
+        cfg, data, daily_btc_close,
+        train_start=bt.get("train_start", "2023-01-01"),
+        train_end=bt.get("train_end", "2024-06-30"),
     )
-    mean_rev = MeanReversionStrategy(
-        lookback=mr_params.get("lookback", 48),
-        z_threshold=mr_params.get("z_threshold", 0.5),
-        long_only=mr_params.get("long_only", True),
-    )
-    ml = DirectionMLStrategy(
-        n_estimators=ml_params.get("n_estimators", 200),
-        max_depth=ml_params.get("max_depth", 3),
-        learning_rate=ml_params.get("learning_rate", 0.05),
-        forward_bars=ml_params.get("forward_bars", 8),
-        proba_threshold=ml_params.get("proba_threshold", 0.52),
-    )
-
-    return CompositeStrategy(
-        strategies=[bah, ts_mom, mean_rev, ml],
-        lookback=comp_params.get("lookback", 168),
-        rebalance_freq=comp_params.get("rebalance_freq", 24),
-        max_weight=comp_params.get("max_weight", 0.60),
-    )
+    return composite
 
 
 def run_once(cfg: dict) -> None:
@@ -104,10 +77,27 @@ def run_once(cfg: dict) -> None:
     print(f"Loaded {len(data.symbols)} symbols, {len(data.index)} bars "
           f"({data.index[0]} → {data.index[-1]})")
 
-    strategy = build_strategy(cfg)
+    barometer_sym = cfg.get("strategy_params", {}).get("macro_regime", {}).get(
+        "barometer_symbol", "BTC/USD"
+    )
+    if barometer_sym not in data.close.columns:
+        barometer_sym = data.symbols[0]
+    daily_btc_close = data.close[barometer_sym].resample("D").last().dropna()
 
-    print("Fitting strategy...")
+    print("Building and fitting strategy...")
+    strategy = build_strategy(cfg, data, daily_btc_close)
     strategy.fit(data)
+
+    # Regime label (walks filter chain to find MacroRegimeFilter)
+    from strategies.macro_regime import MacroRegimeFilter
+    regime_label = "unknown"
+    _s = strategy
+    while _s is not None:
+        if isinstance(_s, MacroRegimeFilter):
+            regime_label = _s.current_regime
+            break
+        _s = getattr(_s, "_strategy", None)
+    print(f"Macro regime: {regime_label.upper()}")
 
     print("Generating signals...")
     signals = strategy.generate_signals(data)
@@ -117,19 +107,35 @@ def run_once(cfg: dict) -> None:
     as_of = str(data.index[-1]) if len(data.index) else "unknown"
     computed_at = datetime.now(timezone.utc).isoformat()
 
-    # Collect per-sub-strategy signals at latest bar
+    # Collect per-sub-strategy signals — walk to innermost CompositeStrategy
+    from strategies.composite import CompositeStrategy
     strategy_signals: dict[str, dict[str, float]] = {}
-    for sub in strategy._strategies:
-        sub_sig = sub.generate_signals(data)
-        row = sub_sig.iloc[-1] if not sub_sig.empty else pd.Series(dtype=float)
-        strategy_signals[sub.name] = {sym: float(row.get(sym, 0.0)) for sym in data.symbols}
+    _s = strategy
+    while _s is not None:
+        if isinstance(_s, CompositeStrategy):
+            for sub in _s._strategies:
+                sub_sig = sub.generate_signals(data)
+                row = sub_sig.iloc[-1] if not sub_sig.empty else pd.Series(dtype=float)
+                strategy_signals[sub.name] = {sym: float(row.get(sym, 0.0)) for sym in data.symbols}
+            break
+        _s = getattr(_s, "_strategy", None)
+
+    # Strategy weights from innermost CompositeStrategy
+    strategy_weights: dict[str, float] = {}
+    _s = strategy
+    while _s is not None:
+        if isinstance(_s, CompositeStrategy):
+            strategy_weights = {k: round(v, 4) for k, v in _s.last_strategy_weights.items()}
+            break
+        _s = getattr(_s, "_strategy", None)
 
     state = {
         "as_of": as_of,
         "computed_at": computed_at,
+        "macro_regime": regime_label,
         "symbols": data.symbols,
         "strategy_signals": strategy_signals,
-        "strategy_weights": {k: round(v, 4) for k, v in strategy.last_strategy_weights.items()},
+        "strategy_weights": strategy_weights,
         "composite": {sym: float(latest.get(sym, 0.0)) for sym in data.symbols},
     }
 

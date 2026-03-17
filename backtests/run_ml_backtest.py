@@ -31,6 +31,9 @@ def load_config(path: str) -> dict:
         return yaml.safe_load(f)
 
 
+TRAIN_SPLIT = 0.7  # 70% train, 30% test
+
+
 def main(config_path: str = "config/default.yaml") -> None:
     cfg = load_config(config_path)
     sp = cfg.get("strategy_params", {})
@@ -39,6 +42,7 @@ def main(config_path: str = "config/default.yaml") -> None:
     bt = cfg.get("backtest", {})
     INITIAL_CAPITAL = float(bt.get("initial_capital", 10_000.0))
     COMMISSION_PCT = float(bt.get("commission_pct", 0.0025))
+    DRIFT_THRESHOLD = float(bt.get("drift_threshold", 0.02))
 
     all_symbols = (
         cfg["symbols"]["long_history"] + cfg["symbols"]["short_history"]
@@ -114,8 +118,9 @@ def main(config_path: str = "config/default.yaml") -> None:
             start=test_start,
             end=test_end,
             initial_capital=INITIAL_CAPITAL,
-            strategy_params={"commission_pct": COMMISSION_PCT},
+            strategy_params={"commission_pct": COMMISSION_PCT, "drift_threshold": DRIFT_THRESHOLD},
             signal_start=train_start,
+            skip_fit=True,
         )
         engine = BacktestEngine(
             config=bt_cfg,
@@ -195,7 +200,8 @@ def _save_ml_chart(results: dict, ml_strategy: DirectionMLStrategy) -> None:
         ax2.set_xlabel("Date")
         ax2.grid(True, alpha=0.3)
 
-    out_path = Path(__file__).parent / "ml_backtest.png"
+    out_path = Path(__file__).parent.parent / "plots" / "ml_backtest.png"
+    out_path.parent.mkdir(exist_ok=True)
     fig.tight_layout()
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)

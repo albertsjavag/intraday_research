@@ -4,7 +4,7 @@ symbols:
   long_start:    "2020-01-01"
   short_start:   "2021-10-01"
 
-timeframe: "hour"   # "day" or "hour"
+timeframe: "hour"
 
 backtest:
   train_start:     "2023-01-01"
@@ -12,29 +12,106 @@ backtest:
   test_start:      "2024-07-01"
   test_end:        "2025-12-31"
   initial_capital: 10000.0
-  commission_pct:  0.0025
-  drift_threshold: 0.02   # only rebalance when weight drifts >2% from target
+  commission_pct:  0.002
+  drift_threshold: 0.02
 
 live:
   notional_per_trade: 300.0
   utc_hour: 0
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Strategy selection
+# Comment/uncomment entries in `enabled` to include or exclude strategies
+# from both the backtest comparison and the live composite.
+#
+# Available strategies:
+#   buy_and_hold         — passive equal-weight benchmark (always shown in backtest)
+#   ts_momentum          — time-series MA momentum (24h–720h lookbacks)
+#   cross_sectional      — rank symbols by 30d return, go long winner
+#   volatility_breakout  — Donchian channel breakout with ATR filter
+#   pairs_arb            — BTC/ETH relative value spread tilt
+#   ml                   — ML direction classifier (GBM, trained on train window)
+# ─────────────────────────────────────────────────────────────────────────────
+strategies:
+  enabled:
+    - ts_momentum
+    - cross_sectional
+    - volatility_breakout
+    - pairs_arb
+    - ml               # regime-aware ML with probability smoothing
+
+  # ── Signal filters applied on top of the composite ─────────────────────────
+  regime_filter:
+    enabled: true
+    ma_period: 200         # 200-day MA — canonical bull/bear dividing line
+    slope_window: 20       # days to measure MA slope direction
+    sideways_band: 0.02    # ±2% around MA200 treated as sideways
+    barometer_symbol: "BTC/USD"
+    # Multipliers per regime:
+    bull_multiplier:     1.0   # full exposure in uptrend
+    sideways_multiplier: 0.5   # half exposure when regime uncertain
+    bear_multiplier:     0.0   # flat in downtrend (long-only system)
+
+  tod_scaling:
+    enabled: true
+    off_hours: [2, 3, 4, 5]   # UTC hours with low liquidity
+    off_multiplier: 0.5        # reduce to 50% during off-hours
+
+  mvrv_filter:
+    enabled: false             # requires data/mvrv.csv from Glassnode
+    data_file: "data/mvrv.csv"
+    caution_level: 3.5         # MVRV Z above this → reduce to caution_multiplier
+    overbought_level: 7.0      # MVRV Z above this → reduce to overbought_multiplier
+    caution_multiplier: 0.5
+    overbought_multiplier: 0.0
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-strategy parameters
+# ─────────────────────────────────────────────────────────────────────────────
 strategy_params:
   ts_momentum:
-    lookbacks: [24, 72, 168, 336]
-    long_threshold: 0.25
+    lookbacks: [72, 168, 336, 720]   # 3d, 7d, 14d, 30d in hourly bars
+    long_threshold: 0.25             # fraction of MAs price must be above
+    min_holding_bars: 48             # 48h minimum hold to filter whipsaws
+
+  cross_sectional:
+    lookback: 720          # 30-day return window for ranking
+    top_n: 1               # hold only the single top performer
+    rebalance_freq: 168    # rebalance weekly
+
+  volatility_breakout:
+    channel_window: 48     # 2-day rolling high for the breakout channel
+    atr_window: 14
+    entry_mult: 0.5        # ATR buffer above channel to confirm breakout
+    exit_mult: 0.0         # exit when price drops back inside channel
+
+  pairs_arb:
+    lookback: 336          # 14-day window for BTC/ETH spread mean/std
+    tilt_per_sigma: 0.15   # weight shift per unit of z-score
+    z_cap: 2.0             # clip z-score to ±2 to avoid extreme tilts
+
   mean_reversion:
-    lookback: 48
-    z_threshold: 0.5
-    long_only: true
-  composite:
-    weighting: "sharpe"
     lookback: 168
-    rebalance_freq: 24
-    max_weight: 0.60
+    z_threshold: 1.0
+    exit_z: 0.0
+    long_only: true
+
+  composite:
+    lookback: 168          # rolling window for Sharpe estimation
+    rebalance_freq: 24     # rebalance composite weights every 24 bars
+    max_weight: 0.60       # cap any single strategy at 60% of composite
+
   ml:
-    n_estimators: 200
-    max_depth: 3
-    learning_rate: 0.05
-    forward_bars: 8
-    proba_threshold: 0.52
+    n_estimators: 300          # more trees → better generalisation (LightGBM is fast enough)
+    max_depth: 4               # slightly deeper than before
+    learning_rate: 0.03        # slower learning → less overfitting
+    forward_bars: 8            # predict 8 bars (8 hours) ahead
+    proba_threshold: 0.58      # only trade high-confidence calls (was 0.52)
+    proba_smooth_span: 4       # EWM span in bars to smooth flip-flopping
+    use_lightgbm: true         # try LightGBM first; pip install lightgbm
+
+  macro_regime:
+    ma_period: 200
+    slope_window: 20
+    sideways_band: 0.02
+    barometer_symbol: "BTC/USD"

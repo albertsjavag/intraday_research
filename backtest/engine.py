@@ -22,6 +22,7 @@ class BacktestConfig:
     initial_capital: float = 100_000.0
     strategy_params: dict = field(default_factory=dict)
     signal_start: str | None = None  # load from here for indicator warmup
+    skip_fit: bool = False           # set True when strategy is pre-fitted externally
 
 
 @dataclass
@@ -62,9 +63,15 @@ class BacktestEngine:
             end=cfg.end,
         )
 
-        # 2. Fit strategy on full warmup data and generate signals
-        self._strategy.fit(data, cfg.strategy_params)
+        # 2. Fit strategy (unless pre-fitted externally) and generate signals
+        if not cfg.skip_fit:
+            self._strategy.fit(data, cfg.strategy_params)
         all_signals: pd.DataFrame = self._strategy.generate_signals(data)
+
+        # Shift signals by 1 bar: signal computed at close of bar t is
+        # executed at close of bar t+1. Prevents using the same bar's close
+        # price for both signal generation and execution (look-ahead bias).
+        all_signals = all_signals.shift(1)
 
         # 3. Slice to [start, end] for actual trading loop
         trade_data = data.slice(cfg.start, cfg.end)
