@@ -105,9 +105,10 @@ strategy_params:
     n_estimators: 300          # more trees → better generalisation (LightGBM is fast enough)
     max_depth: 4               # slightly deeper than before
     learning_rate: 0.03        # slower learning → less overfitting
-    forward_bars: 8            # predict 8 bars (8 hours) ahead
-    proba_threshold: 0.58      # only trade high-confidence calls (was 0.52)
-    proba_smooth_span: 4       # EWM span in bars to smooth flip-flopping
+    forward_bars: 24           # predict 24h ahead — targets day-scale moves
+    min_return_pct: 0.01       # only label as "up" if price rises ≥1% — ignores noise
+    proba_threshold: 0.60      # only trade high-confidence calls
+    proba_smooth_span: 8       # require ~8 bars of sustained confidence before acting
     use_lightgbm: true         # try LightGBM first; pip install lightgbm
 
   macro_regime:

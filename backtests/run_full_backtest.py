@@ -218,9 +218,10 @@ def _build_one(
             n_estimators=p.get("n_estimators", 300),
             max_depth=p.get("max_depth", 4),
             learning_rate=p.get("learning_rate", 0.03),
-            forward_bars=p.get("forward_bars", 8),
-            proba_threshold=p.get("proba_threshold", 0.58),
-            proba_smooth_span=p.get("proba_smooth_span", 4),
+            forward_bars=p.get("forward_bars", 24),
+            min_return_pct=p.get("min_return_pct", 0.01),
+            proba_threshold=p.get("proba_threshold", 0.60),
+            proba_smooth_span=p.get("proba_smooth_span", 8),
             use_lightgbm=p.get("use_lightgbm", True),
         )
         # ML must be trained on train window only

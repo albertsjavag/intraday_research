@@ -57,8 +57,9 @@ class DirectionFeatureBuilder(FeatureBuilder):
     rel_ret_168h  : 7d return minus cross-sectional universe mean
     """
 
-    def __init__(self, forward_bars: int = 8) -> None:
+    def __init__(self, forward_bars: int = 8, min_return_pct: float = 0.0) -> None:
         self.forward_bars = forward_bars
+        self.min_return_pct = min_return_pct
 
     def build(self, data: MarketData) -> pd.DataFrame:
         # ── Cross-sectional returns (computed once across all symbols) ────────
@@ -212,14 +213,20 @@ class DirectionFeatureBuilder(FeatureBuilder):
         return pd.concat(frames)
 
     def build_targets(self, data: MarketData) -> pd.Series:
-        """Binary target: 1 if price is higher after forward_bars."""
+        """Binary target: 1 if price rises by at least min_return_pct after forward_bars.
+
+        min_return_pct = 0.0 (default) → any up move counts (original behaviour).
+        min_return_pct = 0.01 → only label 1 when price is up ≥1% — forces the
+        model to learn what precedes meaningful moves rather than random noise.
+        """
         frames = []
         for sym in data.symbols:
             close = data.close[sym].dropna()
             if len(close) < self.forward_bars + 1:
                 continue
             future = close.shift(-self.forward_bars)
-            target = (future > close).astype(int)
+            fwd_return = (future - close) / close
+            target = (fwd_return >= self.min_return_pct).astype(int)
             target.name = "target"
             target.index.name = "timestamp"
             target = target.reset_index()
@@ -286,9 +293,10 @@ class DirectionMLStrategy(MLStrategy):
         n_estimators: int = 300,
         max_depth: int = 4,
         learning_rate: float = 0.03,
-        forward_bars: int = 8,
-        proba_threshold: float = 0.58,
-        proba_smooth_span: int = 4,
+        forward_bars: int = 24,
+        min_return_pct: float = 0.01,
+        proba_threshold: float = 0.60,
+        proba_smooth_span: int = 8,
         use_lightgbm: bool = True,
         long_short: bool = False,
     ) -> None:
@@ -296,13 +304,16 @@ class DirectionMLStrategy(MLStrategy):
         self._max_depth = max_depth
         self._learning_rate = learning_rate
         self._forward_bars = forward_bars
+        self._min_return_pct = min_return_pct
         self._proba_threshold = proba_threshold
         self._proba_smooth_span = proba_smooth_span
         self._use_lightgbm = use_lightgbm
         self._long_short = long_short
         self._scaler = None
         self._feature_columns: list[str] = []
-        feature_builder = DirectionFeatureBuilder(forward_bars=forward_bars)
+        feature_builder = DirectionFeatureBuilder(
+            forward_bars=forward_bars, min_return_pct=min_return_pct
+        )
         super().__init__(feature_builder=feature_builder)
 
     @property
@@ -315,9 +326,12 @@ class DirectionMLStrategy(MLStrategy):
             self._max_depth = params.get("max_depth", self._max_depth)
             self._learning_rate = params.get("learning_rate", self._learning_rate)
             self._forward_bars = params.get("forward_bars", self._forward_bars)
+            self._min_return_pct = params.get("min_return_pct", self._min_return_pct)
             self._proba_threshold = params.get("proba_threshold", self._proba_threshold)
             self._proba_smooth_span = params.get("proba_smooth_span", self._proba_smooth_span)
-            self._feature_builder = DirectionFeatureBuilder(forward_bars=self._forward_bars)
+            self._feature_builder = DirectionFeatureBuilder(
+                forward_bars=self._forward_bars, min_return_pct=self._min_return_pct
+            )
 
         features_df = self._feature_builder.build(data)
         targets = self._feature_builder.build_targets(data)
